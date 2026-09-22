@@ -1,12 +1,12 @@
 /**
  * `HostAdapter` 的 pi 侧实现。
  *
- * 三条硬规矩（`litepet-adapter-ts/README.md` 的容错要求）：
+ * 容错要求：
  * 1. **任何失败都不许冒泡到宿主**：每种宠物动作都是「尽力而为」，抛出去就是
  *    让桌面宠物把 pi 的会话搞崩。
  * 2. **daemon 不在时不无限重试**：读端点失败按指数退避重试，几次之后彻底放弃，
  *    直到下一次 `session_start` 才重新给机会。
- * 3. **协议版本不支持就闭嘴**：宁可什么都不发，也不要让 daemon 收到读不懂的事件。
+ * 3. **协议版本不支持就静默**：宁可什么都不发，也不要让 daemon 收到读不懂的事件。
  *
  * 生命周期：`session_start` 时 hello，`session_shutdown` 时 bye。
  * 中途 daemon 重启（心跳请求回 `HostUnknown`）会就地重新 hello。
@@ -31,7 +31,7 @@ import {
   type SessionStartInput,
   type ToolEndInput,
   type ToolStartInput,
-} from "litepet-adapter-ts";
+} from "./contract/index.js";
 
 import { HttpLitePetClient, isRpcFailure } from "./client.js";
 import { locateEndpoint, readEndpoint } from "./endpoint.js";

@@ -1,150 +1,100 @@
-# pi-plugins-litepet
+# pi-plugins-litepet 🐾
 
-把 **pi**（TUI coding agent）的会话状态与工具调用接到 **LitePet** 桌面宠物：
-会话一开宠物出来、跑工具时它在忙、这一轮彻底干完它做个提醒动作、pi 退出它回托盘。
+把 [pi](https://github.com/earendil-works/pi-coding-agent)（TUI 终端 Coding Agent）的会话状态、工具执行与任务结果，无缝同步到 **LitePet 桌面宠物**。
 
-宠物做什么动作不由本插件决定——插件只负责把事件翻译成 LitePet 宿主协议
-（`host/hello`、`agent/start`、`tool/start` …），「哪条事件配哪个动画、哪句话」
-由宠物包自己的规则表（`pet.json` 的 `litepet.behavior`）决定。
+当你在终端与 pi 对话编程时，桌面上的小宠物会根据当前的实时状态进行生动的动画联动：开始写代码时认真敲键盘、执行 bash/读写文件时头顶弹出工具气泡、任务彻底完成时触发庆祝动画并推送提示音与系统通知。
 
-## 前置条件
+---
 
-1. LitePet（daemon）在跑。它会在 `~/.litepet/daemon.json` 写下端点文件。
-2. 端口与 token **不在插件里配**：每次 `session_start` 都从端点文件现读
-   （`token` 为空串表示 daemon 关掉了鉴权，此时请求不带 `Authorization` 头）。
-3. 不需要 daemon 一直活着：pi 先启动、LitePet 后启动也能接上，见下文「退避与自愈」。
+## 🌟 核心特性
 
-## 安装
+- **即时状态联动**：深度捕获 pi 会话的思考、工具调用与完成事件，实时投递至 LitePet。
+- **零延迟非阻塞**：内部采用异步缓冲队列，事件派发完全在后台执行，绝不阻塞 pi 的核心交互与终端渲染。
+- **智能提醒机制**：精准区分「中间轮次结束」与「任务彻底收工（settled）」，避免自动重试或排队任务时的重复弹窗与声音打扰。
+- **自愈与热插拔**：pi 与 LitePet 守护进程彼此独立，支持任意顺序启动；守护进程重启或临时关闭时，插件会自动重连，无需重启终端。
+
+---
+
+## 📦 安装与加载
+
+### 前置准备
+确保 LitePet 守护程序已在后台运行（桌面可见宠物小窗，且存在 `~/.litepet/daemon.json`）。
+
+### 安装方式
 
 ```bash
-# 下文的 <本仓库路径> 换成你 clone 到的地方，比如 ~/tools/pi-plugins-litepet
+# 方式 1：作为本地插件安装到 pi（推荐，全局生效）
+pi install /path/to/pi-plugins-litepet
 
-# 1) 作为本地包安装（写 ~/.pi/agent/settings.json，加 -l 写项目级 .pi/settings.json）
-pi install <本仓库路径>
+# 方式 2：在单个会话中临时加载测试（不写入配置文件）
+pi -e /path/to/pi-plugins-litepet/src/index.ts
 
-# 2) 或者临时挂一次，不落任何配置
-pi -e <本仓库路径>/src/index.ts
-
-# 3) 或者手工在 settings.json 里加路径
-#    { "extensions": ["<本仓库路径>/src/index.ts"] }
+# 方式 3：手动添加至 ~/.pi/agent/settings.json
+# {
+#   "extensions": ["/path/to/pi-plugins-litepet/src/index.ts"]
+# }
 ```
 
-加载后 `pi list` 能看到它，卸载用 `pi remove pi-plugins-litepet`。
+安装后可在 pi 终端中使用 `pi list` 查看已加载的扩展；卸载可执行 `pi remove pi-plugins-litepet`。
 
-依赖 `litepet-adapter-ts`（`file:../litepet-adapter-ts`）：那是一个**纯契约包**，
-只有类型与常量，传输层（HTTP 客户端、超时、错误翻译）在本仓库的 `src/client.ts` 里。
+---
 
-## 命令
+## 🎮 终端命令
 
-| 命令 | 作用 |
+插件向 pi 注册了便捷的控制台命令：
+
+| 命令 | 说明 |
 |---|---|
-| `/litepet` | 看连接状态：连没连上、宠物包 id、daemon 版本、心跳间隔、重连次数、最近一次失败原因 |
-| `/litepet test` | 让宠物弹一条测试气泡，用来验证链路通不通 |
+| `/litepet` | 查看连接状态、当前宠物包 ID、守护进程版本、重连次数及健康状况 |
+| `/litepet test` | 命令桌面宠物弹出一个测试气泡，用于快速验证通信链路是否畅通 |
 
-## 事件映射
+---
 
-| pi 事件 | 发给 daemon 的 RPC | 说明 |
+## 🔄 事件映射与工作原理
+
+插件将 pi 的扩展钩子平滑映射为 LitePet 标准协议通知：
+
+| pi 内部事件 | 映射的 LitePet RPC | 说明 |
 |---|---|---|
-| `session_start` | `host/hello` + `daemon/info`（起心跳） | 只在 `startup`/`new`/`resume`/`fork` 都发 |
-| `agent_start` | `agent/start` | 宠物切成「忙」 |
-| `tool_execution_start` | `tool/start` | **不带 `bubble`**：文案交给宠物包的规则表插值 |
-| `tool_execution_end` | `tool/end`（带 `isError`） | |
-| `agent_end` | `agent/end`（带 `success` 与 `note`） | |
-| `agent_settled` | `agent/settled`（带 `note`） | **提醒只由这条触发** |
-| `session_compact` / `session_compact_failed` | `pet/bubble` | 「上下文已压缩 / 压缩失败」 |
-| `session_shutdown` | `host/bye` | 宠物回托盘 |
+| `session_start` | `host/hello` | 建立连接并启动后台保活心跳 |
+| `agent_start` | `agent/start` | 宠物切换为「工作/忙碌」动画 |
+| `tool_execution_start` | `tool/start` | 宠物头顶弹出当前执行的工具气泡 |
+| `tool_execution_end` | `tool/end` | 工具执行完毕，气泡自动退场 |
+| `agent_end` | `agent/end` | 单轮推理结束，切换为待机或反馈动画 |
+| `agent_settled` | `agent/settled` | 任务彻底收工，触发音效与系统桌面/手机通知 |
+| `session_compact` | `pet/bubble` | 气泡提示「上下文已压缩」 |
+| `session_shutdown` | `host/bye` | 会话关闭，注销宿主登记 |
 
-三个 pi 侧的坑，接线时踩过：
+### 异步队列保障
+所有的网络通信都在专用的轻量 FIFO 队列（`src/dispatch.ts`）中调度执行：
+1. **绝不卡顿终端**：所有回调均在入队后立即释放控制权，即使本地网络发生抖动也不影响编码体验。
+2. **严格保持时序**：保证 `tool/start` 与 `tool/end` 等配对事件严格按先后顺序送达。
+3. **安全容错**：网络超时或异常均在插件内部消化，不污染 pi 进程上下文。
 
-- **`agent_end` 里没有 `success` 字段**。成功与失败只能从 `event.messages` 里最后一条
-  assistant 的 `stopReason` 推，规则是「**只有 `error` 算失败**」：`stop`/`length`/`toolUse`
-  算成功，`aborted` 也算成功（是用户自己按的 Esc，不是干活失败，归成失败会让每次打断都弹提醒）；
-  找不到 assistant 消息时也算成功（不伪造失败）。见 `src/outcome.ts`。
-- **`agent_end` ≠ 这一轮真的结束了**。pi 之后可能自动重试、自动压缩后继续、或者接着跑
-  排队的 follow-up。所以「提醒用户」只能挂在 `agent_settled` 上，否则会在每次自动重试时
-  响一遍。
-- **扩展工厂里不许起后台资源**（socket、定时器、子进程都算）。心跳是在 `session_start`
-  里 `hello` 成功之后才起的，并且 `unref()` 了，不拖住 pi 退出。
+---
 
-**投递是异步的**：上面每个回调都只把任务丢进队列就交还控制权，**绝不 `await` HTTP**。
-pi 会逐个 `await` 扩展回调（`dist/core/extensions/runner.js:70`），同步发就意味着每个工具调用
-都要让 pi 等一次网络往返。实测（假 daemon 每条延迟 400ms）：异步下 6 个回调合计 **0ms**，
-同步时大约 2.8s；而 daemon 收到的顺序仍是 `host/hello → daemon/info → agent/start →
-tool/start → tool/end → agent/end → agent/settled`，一条不乱。
+## ❓ 常见问题排查
 
-细节见 `src/dispatch.ts`：
+如果在终端输入 `/litepet` 提示异常，可对照下表排查：
 
-- 单一 FIFO 链，所以 `tool/end` 不会跑到对应的 `tool/start` 前面。
-- 队列上限 32 条，超出丢新事件并计数（`/litepet` 能看到）；daemon 挂住时不让旧事件事后才到。
-- 队列里冒出的意外错误被接住，绝不变 unhandled rejection。
-- 只有 `session_shutdown` 会等一下队列排空（上限 1.5s），好让 `host/bye` 真的发出去。
+| 提示现象 | 可能原因 | 解决办法 |
+|---|---|---|
+| `未连接`（读不到 daemon.json） | LitePet 守护进程尚未启动 | 启动 LitePet 应用即可，插件会自动恢复连接 |
+| `未连接`（connect ECONNREFUSED） | 之前异常关机留下了过期的端点文件 | 重新打开 LitePet 即可覆写最新端点 |
+| `HTTP 401，token 不匹配` | 本地 Token 配置不一致 | 检查 `~/.litepet/config.json` 中的 `auth.token` 配置 |
+| `HTTP 503` | Token 包含了非 ASCII 字符或空格 | 将 Token 修改为标准英文字符串或留空 |
+| `协议版本不兼容` | 守护程序或插件版本差异过大 | 更新插件或重新拉取最新守护程序 |
 
-### 通知正文（`note`）
+> 提示：守护程序的详细运行日志位于 `~/.litepet/logs/daemon.log`，方便跟踪事件接收与规则命中细节。
 
-提醒里的正文由 `src/note.ts` 生成，形状是「[失败 ·] 工具情况 · 用时」：
-`3 个工具 · 1 分 20 秒`、`失败 · 2 个工具 · bash 出错 · 41 秒`、`没调工具 · 8 秒`。
+---
 
-它**只是备选**：宠物包里写了 `alert.text` 时 daemon 用包里的，这里的 `note` 不生效；
-插件不写 `note` 也不会让通知变空，daemon 会回落到事件自带的默认句（如「本轮会话结束」）。
-
-不推助手正文是刻意的：通知里塞一段可能带代码的正文只会变成噪声，而用时与工具数是
-**确定可测**的事实，不需要模型参与。想改成别的（比如助手最后一句）只需动 `src/note.ts`。
-
-## 容错行为（三条硬规矩）
-
-1. **任何失败都不许冒泡到宿主**。宠物纯粹是装饰，它挂了不能影响 pi 的会话——
-   所有 RPC 都被吞进状态里，`/litepet` 能看到原因，但事件回调不抛错。
-2. **daemon 不在时不无限重试**：读端点失败按指数退避（1s 起，上限 60s，最多 5 次），
-   之后彻底放弃，直到下一次 `session_start` 才重新给机会。
-3. **协议版本不支持就闭嘴**：`host/hello` 报的版本比本插件高就停机，宁可什么都不发，
-   也不让 daemon 收到读不懂的事件（`/litepet` 会显示「协议版本不兼容」）。
-
-退避与自愈：
-
-- **daemon 中途重启**：心跳请求会收到 `-32001 HostUnknown`，插件就地重新 `host/hello`，
-  不需要重启 pi。重连次数在 `/litepet` 里能数出来。
-- **连不上**（`ECONNREFUSED`）：丢弃客户端，下一次事件重新读端点建连。
-- **单次调用超时 3 秒**（`src/client.ts` 的 `DEFAULT_TIMEOUT_MS`）。daemon 在回环上，
-  正常是毫秒级；工具调用是热路径，超时拖长只会让队列里的旧事件事后才到。
-- `agent/start`、`tool/*`、`pet/bubble`、`host/bye` 都是**通知**（JSON-RPC notification），
-  daemon 不回包；只有 `host/hello`、`daemon/ping`、`daemon/info` 是请求。
-  心跳间隔取 `daemon/info` 报的值（当前实现 20s），拿不到时兜底 20s——daemon 那边
-  60s 收不到 ping 就认为宿主死了。
-
-## 排错
-
-先 `/litepet`。常见几条：
-
-| 现象 | 原因 |
-|---|---|
-| 未连接 + 「读不到 daemon.json」 | LitePet 没在跑 |
-| 未连接 + 「connect ECONNREFUSED …」 | 端点文件在，但那端口上没人（daemon 异常退出残留） |
-| 「HTTP 401，token 不匹配」 | `~/.litepet/config.json` 的 `auth.token` 与端点文件里的对不上（一般不会，除非手工改过） |
-| 「HTTP 503」 | token 里含空白或非 ASCII，daemon 把鉴权锁死了 |
-| 「协议版本不兼容」 | daemon 升级了协议；升级本插件 |
-| 什么都没发生但「已连接」 | 宠物包没有规则表 → 动作由 daemon 的降级映射决定，可能不响 |
-
-daemon 侧的对照日志在 `~/.litepet/logs/daemon.log`，里面能看到 `宿主 pi 已接入`、
-`宿主 pi 开始工作`、`规则命中提醒：agent.settled` 这些行。
-
-## 代码结构
-
-| 文件 | 管什么 |
-|---|---|
-| `src/index.ts` | 只做接线：pi 事件 → adapter 方法；注册 `/litepet` 命令 |
-| `src/adapter.ts` | 决策：什么时候发、发什么、失败怎么记账、心跳与重连 |
-| `src/client.ts` | 传输：HTTP + JSON-RPC、超时、错误分类（RPC 失败 vs 连不上） |
-| `src/endpoint.ts` | 读 `~/.litepet/daemon.json`，定位家目录 |
-| `src/outcome.ts` | 从 pi 的消息里推 `agent/end` 的 `success` |
-| `src/note.ts` | 给提醒凑正文：一轮的工具数与用时 → 一句中文 |
-| `src/dispatch.ts` | 投递队列：回调不再等 HTTP，保序 + 有界 + 吞错 |
-| `scripts/smoke.mjs` | 手工冒烟：喂一轮假事件，看真实 daemon 的反应 |
-
-换宿主（比如 dsh）时只需要重写 `src/index.ts`，其余六个文件与宿主无关。
-
-## 检查
+## 🛠️ 项目开发与测试
 
 ```bash
-npm run typecheck      # tsc --noEmit，零输出为通过
-node scripts/smoke.mjs # 需要 LitePet 正在运行
+# 类型检查
+npm run typecheck
+
+# 冒烟测试（需 LitePet 守护进程正在运行）
+npm run smoke
 ```

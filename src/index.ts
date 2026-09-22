@@ -4,7 +4,7 @@
  * 这里只做接线，不做决策——「要不要发、发什么」全在 `adapter.ts`，
  * 「失败怎么办」在 `client.ts`。这样换宿主（dsh）时只需要重写本文件。
  *
- * 事件 → 触发器对照（`litepet-adapter-ts` 的 `TRIGGER_SPECS`）：
+ * 事件 → 触发器对照（契约层的 `TRIGGER_SPECS`）：
  *
  * | pi 事件 | 触发器 | RPC |
  * |---|---|---|
@@ -29,7 +29,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { PiHostAdapter } from "./adapter.js";
-import type { BubbleInput } from "litepet-adapter-ts";
+import type { BubbleInput } from "./contract/index.js";
 
 import { EventDispatcher, type DispatcherStats } from "./dispatch.js";
 import { TurnTracker, formatNote } from "./note.js";

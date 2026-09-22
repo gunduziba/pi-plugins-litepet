@@ -29,16 +29,13 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs"
   },
-  "dependencies": {
-    "litepet-adapter-ts": "git+https://github.com/gunduziba/litepet-adapter-ts.git#5a4db7fd394b1d25c710fb82368fbf4186291c06"
-  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@types/node": "^24.0.0",
+    "@types/node": "^24.13.6",
     "jiti": "^2.7.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.3"
   }
 }

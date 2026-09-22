@@ -1,7 +1,7 @@
 /**
  * HTTP + JSON-RPC 客户端。
  *
- * `litepet-adapter-ts` 只给签名，传输由宿主实现——本文件就是 pi 侧的那份实现。
+ * 基于契约层的强类型定义，实现针对 LitePet 守护进程的 HTTP 通信传输。
  * 三件事固定在这里：回环地址、一个进程内自增的 `id`、以及「token 为空就不带
  * `Authorization` 头」（daemon 的 `AuthGate::Open` 分支）。
  */
@@ -20,7 +20,7 @@ import {
   type NotificationMethod,
   type RequestMethod,
   type RequestOptions,
-} from "litepet-adapter-ts";
+} from "./contract/index.js";
 
 /**
  * 单次调用默认超时（毫秒）。

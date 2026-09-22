@@ -1,8 +1,7 @@
 /**
  * 端点发现：家目录 → `daemon.json` → `{protocolVersion, port, token}`。
  *
- * 家目录布局与常量全部取自 `litepet-adapter-ts`（`HOME_ENV` / `HOME_DIR_NAME` /
- * `ENDPOINT_FILE`），不在这里另抄一份——抄一份就等于多一处会漂移的地方。
+ * 家目录布局与常量取自契约模块（`HOME_ENV` / `HOME_DIR_NAME` / `ENDPOINT_FILE`）。
  *
  * **本文件不启动 daemon**：读不到就返回 `null`，由调用方决定下一步
  * （本插件选择静默放弃，理由见 `README.md`）。
@@ -19,7 +18,7 @@ import {
   PROTOCOL_VERSION,
   type DaemonEndpoint,
   type EndpointLocation,
-} from "litepet-adapter-ts";
+} from "./contract/index.js";
 
 /**
  * 解析家目录与端点文件路径。
