@@ -16,6 +16,10 @@
  * | `tool_execution_end` | `onToolEnd` | `tool/end` |
  * | `session_compact` / `..._failed` | `onBubble` | `pet/bubble` |
  * | `session_shutdown` | `onExit` | `host/bye` |
+ *
+ * **投递是异步的**：所有回调都只把任务丢进 {@link EventDispatcher} 就返回，绝不
+ * `await` HTTP（否则 pi 每轮要等几次网络往返）。顺序由队列保证，`session_shutdown`
+ * 会等一下队列排空，好让 `host/bye` 真的发出去。
  */
 
 import {
@@ -27,8 +31,12 @@ import {
 import { PiHostAdapter } from "./adapter.js";
 import type { BubbleInput } from "litepet-adapter-ts";
 
+import { EventDispatcher, type DispatcherStats } from "./dispatch.js";
 import { TurnTracker, formatNote } from "./note.js";
 import { deriveSuccess } from "./outcome.js";
+
+/** `session_shutdown` 里等队列排空的上限（毫秒）。 */
+const SHUTDOWN_DRAIN_MS = 1500;
 
 /** 压缩原因 → 气泡文案。`manual` = 用户敲 `/compress`。 */
 const COMPACT_BUBBLES: Readonly<Record<string, string>> = {
@@ -54,59 +62,74 @@ export default function litepetExtension(pi: ExtensionAPI): void {
   const turn = new TurnTracker();
   /** 最近一次推导出的成败，给 `agent_settled` 复用（它自己的事件里没有成败）。 */
   let lastSuccess = true;
-
-  pi.on("session_start", async () => {
-    await adapter.onAttach({
-      host: adapter.host,
-      agentVersion: VERSION,
-      pid: process.pid,
-    });
+  /** 队列里冒出意料之外的错误时的记账（adapter 自己接住的那类不算）。 */
+  const faults: string[] = [];
+  const dispatch = new EventDispatcher((where, error) => {
+    faults.push(`${where}：${error instanceof Error ? error.message : String(error)}`);
   });
 
-  pi.on("agent_start", async (_event, ctx) => {
+  pi.on("session_start", () => {
+    dispatch.push("host/hello", () =>
+      adapter.onAttach({
+        host: adapter.host,
+        agentVersion: VERSION,
+        pid: process.pid,
+      }),
+    );
+  });
+
+  pi.on("agent_start", (_event, ctx) => {
     turn.start(Date.now());
-    await adapter.onSessionStart({ sessionId: sessionIdOf(ctx) });
+    dispatch.push("agent/start", () =>
+      adapter.onSessionStart({ sessionId: sessionIdOf(ctx) }),
+    );
   });
 
-  pi.on("agent_end", async (event, ctx) => {
+  pi.on("agent_end", (event, ctx) => {
     lastSuccess = deriveSuccess(event.messages);
-    await adapter.onSessionEnd({
-      sessionId: sessionIdOf(ctx),
-      success: lastSuccess,
-      note: noteOf(turn, lastSuccess),
-    });
+    const note = noteOf(turn, lastSuccess);
+    const sessionId = sessionIdOf(ctx);
+    dispatch.push("agent/end", () =>
+      adapter.onSessionEnd({ sessionId, success: lastSuccess, note }),
+    );
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
-    await adapter.onSessionSettled({
-      sessionId: sessionIdOf(ctx),
-      note: noteOf(turn, lastSuccess),
-    });
+  pi.on("agent_settled", (_event, ctx) => {
+    const note = noteOf(turn, lastSuccess);
+    const sessionId = sessionIdOf(ctx);
+    dispatch.push("agent/settled", () => adapter.onSessionSettled({ sessionId, note }));
   });
 
-  pi.on("tool_execution_start", async (event) => {
+  pi.on("tool_execution_start", (event) => {
     turn.countTool();
     // 不传 bubble：文案交给宠物包的规则表插值，插件不替用户决定宠物说什么。
-    await adapter.onToolStart({ toolName: event.toolName });
+    dispatch.push("tool/start", () => adapter.onToolStart({ toolName: event.toolName }));
   });
 
-  pi.on("tool_execution_end", async (event) => {
+  pi.on("tool_execution_end", (event) => {
     if (event.isError) {
       turn.markToolFailed(event.toolName);
     }
-    await adapter.onToolEnd({ toolName: event.toolName, isError: event.isError });
+    const isError = event.isError;
+    dispatch.push("tool/end", () =>
+      adapter.onToolEnd({ toolName: event.toolName, isError }),
+    );
   });
 
-  pi.on("session_compact", async (event) => {
-    await adapter.onBubble(compactBubble(event.reason));
+  pi.on("session_compact", (event) => {
+    const bubble = compactBubble(event.reason);
+    dispatch.push("pet/bubble", () => adapter.onBubble(bubble));
   });
 
-  pi.on("session_compact_failed", async () => {
-    await adapter.onBubble({ kind: "warning", text: "上下文压缩失败" });
+  pi.on("session_compact_failed", () => {
+    dispatch.push("pet/bubble", () =>
+      adapter.onBubble({ kind: "warning", text: "上下文压缩失败" }),
+    );
   });
 
   pi.on("session_shutdown", async (event) => {
-    await adapter.onExit({ reason: event.reason });
+    dispatch.push("host/bye", () => adapter.onExit({ reason: event.reason }));
+    await dispatch.drain(SHUTDOWN_DRAIN_MS);
   });
 
   pi.registerCommand("litepet", {
@@ -117,7 +140,7 @@ export default function litepetExtension(pi: ExtensionAPI): void {
         ctx.ui.notify("已请 LitePet 弹一条测试气泡", "info");
         return;
       }
-      ctx.ui.notify(await formatStatus(adapter), "info");
+      ctx.ui.notify(await formatStatus(adapter, dispatch.stats, faults), "info");
     },
   });
 }
@@ -159,9 +182,15 @@ function compactBubble(reason: string): BubbleInput {
  * 自检文案：把连接状态拼成给 `/litepet` 看的多行文本。
  *
  * @param adapter 适配器实例。
+ * @param stats 投递队列的当场快照。
+ * @param faults 队列里出现过的意料之外的错误（最近 3 条）。
  * @returns 多行中文状态说明。
  */
-async function formatStatus(adapter: PiHostAdapter): Promise<string> {
+async function formatStatus(
+  adapter: PiHostAdapter,
+  stats: DispatcherStats,
+  faults: readonly string[],
+): Promise<string> {
   const status = await adapter.getStatus();
   const lines: string[] = [
     status.attached
@@ -169,6 +198,7 @@ async function formatStatus(adapter: PiHostAdapter): Promise<string> {
       : "未连接 LitePet",
     `端点文件：${status.endpointFile}（${status.endpointFound ? "已读到" : "读不到"}）`,
     `心跳：${status.heartbeatRunning ? `${status.pingIntervalMs ?? "?"} ms` : "未启动"}`,
+    `投递：排队 ${stats.pending} 条${stats.dropped > 0 ? `，因积压丢弃 ${stats.dropped} 条` : ""}`,
   ];
   if (status.reconnects > 0) {
     lines.push(`daemon 重启后重连过 ${status.reconnects} 次`);
@@ -178,6 +208,9 @@ async function formatStatus(adapter: PiHostAdapter): Promise<string> {
   }
   if (status.lastFailure !== null) {
     lines.push(`最近失败：${status.lastFailure}`);
+  }
+  for (const fault of faults.slice(-3)) {
+    lines.push(`投递异常：${fault}`);
   }
   return lines.join("\n");
 }

@@ -66,6 +66,19 @@ pi -e <本仓库路径>/src/index.ts
 - **扩展工厂里不许起后台资源**（socket、定时器、子进程都算）。心跳是在 `session_start`
   里 `hello` 成功之后才起的，并且 `unref()` 了，不拖住 pi 退出。
 
+**投递是异步的**：上面每个回调都只把任务丢进队列就交还控制权，**绝不 `await` HTTP**。
+pi 会逐个 `await` 扩展回调（`dist/core/extensions/runner.js:70`），同步发就意味着每个工具调用
+都要让 pi 等一次网络往返。实测（假 daemon 每条延迟 400ms）：异步下 6 个回调合计 **0ms**，
+同步时大约 2.8s；而 daemon 收到的顺序仍是 `host/hello → daemon/info → agent/start →
+tool/start → tool/end → agent/end → agent/settled`，一条不乱。
+
+细节见 `src/dispatch.ts`：
+
+- 单一 FIFO 链，所以 `tool/end` 不会跑到对应的 `tool/start` 前面。
+- 队列上限 32 条，超出丢新事件并计数（`/litepet` 能看到）；daemon 挂住时不让旧事件事后才到。
+- 队列里冒出的意外错误被接住，绝不变 unhandled rejection。
+- 只有 `session_shutdown` 会等一下队列排空（上限 1.5s），好让 `host/bye` 真的发出去。
+
 ### 通知正文（`note`）
 
 提醒里的正文由 `src/note.ts` 生成，形状是「[失败 ·] 工具情况 · 用时」：
@@ -92,7 +105,7 @@ pi -e <本仓库路径>/src/index.ts
   不需要重启 pi。重连次数在 `/litepet` 里能数出来。
 - **连不上**（`ECONNREFUSED`）：丢弃客户端，下一次事件重新读端点建连。
 - **单次调用超时 3 秒**（`src/client.ts` 的 `DEFAULT_TIMEOUT_MS`）。daemon 在回环上，
-  正常是毫秒级；`tool_execution_start` 属于热路径，不能挂太久。
+  正常是毫秒级；工具调用是热路径，超时拖长只会让队列里的旧事件事后才到。
 - `agent/start`、`tool/*`、`pet/bubble`、`host/bye` 都是**通知**（JSON-RPC notification），
   daemon 不回包；只有 `host/hello`、`daemon/ping`、`daemon/info` 是请求。
   心跳间隔取 `daemon/info` 报的值（当前实现 20s），拿不到时兜底 20s——daemon 那边
@@ -124,9 +137,10 @@ daemon 侧的对照日志在 `~/.litepet/logs/daemon.log`，里面能看到 `宿
 | `src/endpoint.ts` | 读 `~/.litepet/daemon.json`，定位家目录 |
 | `src/outcome.ts` | 从 pi 的消息里推 `agent/end` 的 `success` |
 | `src/note.ts` | 给提醒凑正文：一轮的工具数与用时 → 一句中文 |
+| `src/dispatch.ts` | 投递队列：回调不再等 HTTP，保序 + 有界 + 吞错 |
 | `scripts/smoke.mjs` | 手工冒烟：喂一轮假事件，看真实 daemon 的反应 |
 
-换宿主（比如 dsh）时只需要重写 `src/index.ts`，其余五个文件与宿主无关。
+换宿主（比如 dsh）时只需要重写 `src/index.ts`，其余六个文件与宿主无关。
 
 ## 检查
 
