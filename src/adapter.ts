@@ -125,13 +125,15 @@ export class PiHostAdapter implements HostAdapter {
   /**
    * 一轮会话结束 → `agent/end`。
    *
-   * `success` 由调用方从 `agent_end` 的消息里推出来（见 `outcome.ts`）。
+   * `success` 由调用方从 `agent_end` 的消息里推出来（见 `outcome.ts`）；
+   * `note` 是给提醒用的一句正文（见 `note.ts`）。
    */
   async onSessionEnd(input: SessionEndInput): Promise<void> {
     await this.#notify(Method.AgentEnd, {
       host: this.host,
       sessionId: input.sessionId,
       success: input.success,
+      note: input.note,
     });
   }
 
@@ -140,9 +142,15 @@ export class PiHostAdapter implements HostAdapter {
    *
    * 提醒（音效 / 系统通知 / 推送）只由这一条触发，所以**必须**是 pi 的
    * `agent_settled`，不能拿 `agent_end` 顶替。
+   *
+   * `note` 是给提醒用的一句正文（见 `note.ts`）：包里写了 `alert.text` 时它不生效。
    */
   async onSessionSettled(input: SessionSettledInput): Promise<void> {
-    await this.#notify(Method.AgentSettled, { host: this.host, sessionId: input.sessionId });
+    await this.#notify(Method.AgentSettled, {
+      host: this.host,
+      sessionId: input.sessionId,
+      note: input.note,
+    });
   }
 
   /** 工具调用开始 → `tool/start`。气泡文案交给 daemon 的规则表。 */

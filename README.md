@@ -49,8 +49,8 @@ pi -e <本仓库路径>/src/index.ts
 | `agent_start` | `agent/start` | 宠物切成「忙」 |
 | `tool_execution_start` | `tool/start` | **不带 `bubble`**：文案交给宠物包的规则表插值 |
 | `tool_execution_end` | `tool/end`（带 `isError`） | |
-| `agent_end` | `agent/end`（带 `success`） | |
-| `agent_settled` | `agent/settled` | **提醒只由这条触发** |
+| `agent_end` | `agent/end`（带 `success` 与 `note`） | |
+| `agent_settled` | `agent/settled`（带 `note`） | **提醒只由这条触发** |
 | `session_compact` / `session_compact_failed` | `pet/bubble` | 「上下文已压缩 / 压缩失败」 |
 | `session_shutdown` | `host/bye` | 宠物回托盘 |
 
@@ -65,6 +65,17 @@ pi -e <本仓库路径>/src/index.ts
   响一遍。
 - **扩展工厂里不许起后台资源**（socket、定时器、子进程都算）。心跳是在 `session_start`
   里 `hello` 成功之后才起的，并且 `unref()` 了，不拖住 pi 退出。
+
+### 通知正文（`note`）
+
+提醒里的正文由 `src/note.ts` 生成，形状是「[失败 ·] 工具情况 · 用时」：
+`3 个工具 · 1 分 20 秒`、`失败 · 2 个工具 · bash 出错 · 41 秒`、`没调工具 · 8 秒`。
+
+它**只是备选**：宠物包里写了 `alert.text` 时 daemon 用包里的，这里的 `note` 不生效；
+插件不写 `note` 也不会让通知变空，daemon 会回落到事件自带的默认句（如「本轮会话结束」）。
+
+不推助手正文是刻意的：通知里塞一段可能带代码的正文只会变成噪声，而用时与工具数是
+**确定可测**的事实，不需要模型参与。想改成别的（比如助手最后一句）只需动 `src/note.ts`。
 
 ## 容错行为（三条硬规矩）
 
@@ -112,9 +123,10 @@ daemon 侧的对照日志在 `~/.litepet/logs/daemon.log`，里面能看到 `宿
 | `src/client.ts` | 传输：HTTP + JSON-RPC、超时、错误分类（RPC 失败 vs 连不上） |
 | `src/endpoint.ts` | 读 `~/.litepet/daemon.json`，定位家目录 |
 | `src/outcome.ts` | 从 pi 的消息里推 `agent/end` 的 `success` |
+| `src/note.ts` | 给提醒凑正文：一轮的工具数与用时 → 一句中文 |
 | `scripts/smoke.mjs` | 手工冒烟：喂一轮假事件，看真实 daemon 的反应 |
 
-换宿主（比如 dsh）时只需要重写 `src/index.ts`，其余四个文件与宿主无关。
+换宿主（比如 dsh）时只需要重写 `src/index.ts`，其余五个文件与宿主无关。
 
 ## 检查
 

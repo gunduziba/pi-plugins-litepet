@@ -10,8 +10,8 @@
  * |---|---|---|
  * | `session_start` | `onAttach` | `host/hello` + `daemon/info`（起心跳） |
  * | `agent_start` | `onSessionStart` | `agent/start` |
- * | `agent_end` | `onSessionEnd` | `agent/end`（`success` 由消息推出来） |
- * | `agent_settled` | `onSessionSettled` | `agent/settled`（**提醒只由这条触发**） |
+ * | `agent_end` | `onSessionEnd` | `agent/end`（`success` 由消息推出来，带 `note`） |
+ * | `agent_settled` | `onSessionSettled` | `agent/settled`（**提醒只由这条触发**，带 `note`） |
  * | `tool_execution_start` | `onToolStart` | `tool/start` |
  * | `tool_execution_end` | `onToolEnd` | `tool/end` |
  * | `session_compact` / `..._failed` | `onBubble` | `pet/bubble` |
@@ -27,6 +27,7 @@ import {
 import { PiHostAdapter } from "./adapter.js";
 import type { BubbleInput } from "litepet-adapter-ts";
 
+import { TurnTracker, formatNote } from "./note.js";
 import { deriveSuccess } from "./outcome.js";
 
 /** 压缩原因 → 气泡文案。`manual` = 用户敲 `/compress`。 */
@@ -49,6 +50,10 @@ const COMPACT_BUBBLE_FALLBACK = "上下文已压缩";
  */
 export default function litepetExtension(pi: ExtensionAPI): void {
   const adapter = new PiHostAdapter();
+  /** 这一轮的统计，只用来给通知凑一句正文。 */
+  const turn = new TurnTracker();
+  /** 最近一次推导出的成败，给 `agent_settled` 复用（它自己的事件里没有成败）。 */
+  let lastSuccess = true;
 
   pi.on("session_start", async () => {
     await adapter.onAttach({
@@ -59,26 +64,36 @@ export default function litepetExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_start", async (_event, ctx) => {
+    turn.start(Date.now());
     await adapter.onSessionStart({ sessionId: sessionIdOf(ctx) });
   });
 
   pi.on("agent_end", async (event, ctx) => {
+    lastSuccess = deriveSuccess(event.messages);
     await adapter.onSessionEnd({
       sessionId: sessionIdOf(ctx),
-      success: deriveSuccess(event.messages),
+      success: lastSuccess,
+      note: noteOf(turn, lastSuccess),
     });
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    await adapter.onSessionSettled({ sessionId: sessionIdOf(ctx) });
+    await adapter.onSessionSettled({
+      sessionId: sessionIdOf(ctx),
+      note: noteOf(turn, lastSuccess),
+    });
   });
 
   pi.on("tool_execution_start", async (event) => {
+    turn.countTool();
     // 不传 bubble：文案交给宠物包的规则表插值，插件不替用户决定宠物说什么。
     await adapter.onToolStart({ toolName: event.toolName });
   });
 
   pi.on("tool_execution_end", async (event) => {
+    if (event.isError) {
+      turn.markToolFailed(event.toolName);
+    }
     await adapter.onToolEnd({ toolName: event.toolName, isError: event.isError });
   });
 
@@ -115,6 +130,19 @@ export default function litepetExtension(pi: ExtensionAPI): void {
  */
 function sessionIdOf(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionId();
+}
+
+/**
+ * 取这一轮的通知正文。
+ *
+ * @param turn 记账器。
+ * @param success 这一轮是不是成功。
+ * @returns 正文；这一轮没开始过（没走过 `agent_start`）时给 `undefined`，
+ *   让 daemon 回落到它自己的默认句。
+ */
+function noteOf(turn: TurnTracker, success: boolean): string | undefined {
+  const facts = turn.snapshot(Date.now());
+  return facts === null ? undefined : formatNote(facts, success);
 }
 
 /**

@@ -30,7 +30,7 @@
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "litepet-adapter-ts": "git+https://github.com/gunduziba/litepet-adapter-ts.git#v0.1.0"
+    "litepet-adapter-ts": "git+https://github.com/gunduziba/litepet-adapter-ts.git#5a4db7fd394b1d25c710fb82368fbf4186291c06"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

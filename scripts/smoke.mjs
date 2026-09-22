@@ -24,8 +24,8 @@ if (process.argv[2] !== "status") {
   await adapter.onToolEnd({ toolName: "read" });
   await adapter.onToolStart({ toolName: "edit" });
   await adapter.onToolEnd({ toolName: "edit", isError: true });
-  await adapter.onSessionEnd({ sessionId: "smoke", success: true });
-  await adapter.onSessionSettled({ sessionId: "smoke" });
+  await adapter.onSessionEnd({ sessionId: "smoke", success: true, note: "2 个工具 · 3 秒" });
+  await adapter.onSessionSettled({ sessionId: "smoke", note: "2 个工具 · 3 秒" });
   await adapter.onBubble({ kind: "info", text: "冒烟测试气泡" });
 }
 
