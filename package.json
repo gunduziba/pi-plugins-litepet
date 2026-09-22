@@ -1,0 +1,44 @@
+{
+  "name": "pi-plugins-litepet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把 pi 的会话状态与工具调用接到 LitePet 桌面宠物",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-plugin",
+    "pi-extension",
+    "litepet",
+    "desktop-pet"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gunduziba/pi-plugins-litepet.git"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "litepet-adapter-ts": "git+https://github.com/gunduziba/litepet-adapter-ts.git#v0.1.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^24.0.0",
+    "jiti": "^2.7.0",
+    "typescript": "^5.9.0"
+  }
+}
